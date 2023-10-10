@@ -1,19 +1,17 @@
 use std::collections::{hash_map::Entry, HashMap, HashSet, VecDeque};
 
-use rosrust::Duration;
+use r2r::{
+    builtin_interfaces::msg::{Duration, Time},
+    geometry_msgs::msg::{Transform, TransformStamped},
+    std_msgs::msg::Header,
+    tf2_msgs::msg::TFMessage,
+};
 
 use crate::{
     tf_error::TfError,
     tf_graph_node::TfGraphNode,
     tf_individual_transform_chain::TfIndividualTransformChain,
-    transforms::{
-        chain_transforms,
-        geometry_msgs::{Transform, TransformStamped},
-        get_inverse,
-        std_msgs::Header,
-        tf2_msgs::TFMessage,
-        to_transform_stamped,
-    },
+    transforms::{chain_transforms, get_inverse, to_transform_stamped},
 };
 
 #[derive(Clone, Debug)]
@@ -27,7 +25,10 @@ const DEFAULT_CACHE_DURATION_SECONDS: i32 = 10;
 
 impl TfBuffer {
     pub(crate) fn new() -> Self {
-        Self::new_with_duration(Duration::from_seconds(DEFAULT_CACHE_DURATION_SECONDS))
+        Self::new_with_duration(Duration {
+            sec: DEFAULT_CACHE_DURATION_SECONDS,
+            nanosec: 0,
+        })
     }
 
     pub fn new_with_duration(cache_duration: Duration) -> Self {
@@ -61,7 +62,7 @@ impl TfBuffer {
             Entry::Occupied(e) => e.into_mut(),
             Entry::Vacant(e) => e.insert(TfIndividualTransformChain::new(
                 static_tf,
-                self.cache_duration,
+                self.cache_duration.clone(),
             )),
         }
         .add_to_buffer(transform.clone());
@@ -72,7 +73,7 @@ impl TfBuffer {
         &self,
         from: String,
         to: String,
-        time: rosrust::Time,
+        time: &Time,
     ) -> Result<Vec<String>, TfError> {
         let mut res = vec![];
         let mut frontier: VecDeque<String> = VecDeque::new();
@@ -98,7 +99,7 @@ impl TfBuffer {
                             child: v.clone(),
                             parent: current_node.clone(),
                         })
-                        .map_or(false, |chain| chain.has_valid_transform(time))
+                        .map_or(false, |chain| chain.has_valid_transform(&time))
                     {
                         parents.insert(v.to_string(), current_node.clone());
                         frontier.push_front(v.to_string());
@@ -132,11 +133,11 @@ impl TfBuffer {
         &self,
         from: &str,
         to: &str,
-        time: rosrust::Time,
+        time: &Time,
     ) -> Result<TransformStamped, TfError> {
         let from = from.to_string();
         let to = to.to_string();
-        let path = self.retrieve_transform_path(from.clone(), to.clone(), time);
+        let path = self.retrieve_transform_path(from.clone(), to.clone(), &time);
 
         match path {
             Ok(path) => {
@@ -148,7 +149,7 @@ impl TfBuffer {
                         parent: first.clone(),
                     };
                     let time_cache = self.transform_data.get(&node).unwrap();
-                    let transform = time_cache.get_closest_transform(time);
+                    let transform = time_cache.get_closest_transform(&time);
                     match transform {
                         Err(e) => return Err(e),
                         Ok(x) => {
@@ -162,8 +163,7 @@ impl TfBuffer {
                     child_frame_id: to,
                     header: Header {
                         frame_id: from,
-                        stamp: time,
-                        seq: 1,
+                        stamp: time.clone(),
                     },
                     transform: final_tf,
                 };
@@ -176,30 +176,34 @@ impl TfBuffer {
     pub(crate) fn lookup_transform_with_time_travel(
         &self,
         to: &str,
-        time2: rosrust::Time,
+        time2: Time,
         from: &str,
-        time1: rosrust::Time,
+        time1: Time,
         fixed_frame: &str,
     ) -> Result<TransformStamped, TfError> {
-        let tf1 = self.lookup_transform(from, fixed_frame, time1)?;
-        let tf2 = self.lookup_transform(to, fixed_frame, time2)?;
+        let tf1 = self.lookup_transform(from, fixed_frame, &time1)?;
+        let tf2 = self.lookup_transform(to, fixed_frame, &time2)?;
         let transforms = get_inverse(&tf1);
         let result = chain_transforms(&[tf2.transform, transforms.transform]);
         Ok(to_transform_stamped(
             result,
             from.to_string(),
             to.to_string(),
-            time1,
+            &time1,
         ))
     }
 }
 
 #[cfg(test)]
 mod test {
-    use rosrust::Time;
+    use crate::utils::time_from_nanosec;
 
     use super::*;
-    use crate::transforms::geometry_msgs::{Quaternion, Vector3};
+
+    use r2r::{
+        builtin_interfaces::msg::Time,
+        geometry_msgs::msg::{Quaternion, Vector3},
+    };
 
     const PARENT: &str = "parent";
     const CHILD0: &str = "child0";
@@ -217,11 +221,10 @@ mod test {
             child_frame_id: "item".to_string(),
             header: Header {
                 frame_id: "world".to_string(),
-                stamp: rosrust::Time {
-                    sec: time.floor() as u32,
-                    nsec: nsecs,
+                stamp: Time {
+                    sec: time.floor() as i32,
+                    nanosec: nsecs,
                 },
-                seq: 1,
             },
             transform: Transform {
                 rotation: Quaternion {
@@ -244,11 +247,10 @@ mod test {
             child_frame_id: "base_link".to_string(),
             header: Header {
                 frame_id: "world".to_string(),
-                stamp: rosrust::Time {
-                    sec: time.floor() as u32,
-                    nsec: nsecs,
+                stamp: Time {
+                    sec: time.floor() as i32,
+                    nanosec: nsecs,
                 },
-                seq: 1,
             },
             transform: Transform {
                 rotation: Quaternion {
@@ -271,11 +273,10 @@ mod test {
             child_frame_id: "camera".to_string(),
             header: Header {
                 frame_id: "base_link".to_string(),
-                stamp: rosrust::Time {
-                    sec: time.floor() as u32,
-                    nsec: nsecs,
+                stamp: Time {
+                    sec: time.floor() as i32,
+                    nanosec: nsecs,
                 },
-                seq: 1,
             },
             transform: Transform {
                 rotation: Quaternion {
@@ -300,13 +301,12 @@ mod test {
     fn test_basic_tf_lookup() {
         let mut tf_buffer = TfBuffer::new();
         build_test_tree(&mut tf_buffer, 0f64);
-        let res = tf_buffer.lookup_transform("camera", "item", rosrust::Time { sec: 0, nsec: 0 });
+        let res = tf_buffer.lookup_transform("camera", "item", &time_from_nanosec(0));
         let expected = TransformStamped {
             child_frame_id: "item".to_string(),
             header: Header {
                 frame_id: "camera".to_string(),
-                stamp: rosrust::Time { sec: 0, nsec: 0 },
-                seq: 1,
+                stamp: time_from_nanosec(0),
             },
             transform: Transform {
                 rotation: Quaternion {
@@ -331,23 +331,12 @@ mod test {
         let mut tf_buffer = TfBuffer::new();
         build_test_tree(&mut tf_buffer, 0f64);
         build_test_tree(&mut tf_buffer, 1f64);
-        let res = tf_buffer.lookup_transform(
-            "camera",
-            "item",
-            rosrust::Time {
-                sec: 0,
-                nsec: 700_000_000,
-            },
-        );
+        let res = tf_buffer.lookup_transform("camera", "item", &time_from_nanosec(700_000_000));
         let expected = TransformStamped {
             child_frame_id: "item".to_string(),
             header: Header {
                 frame_id: "camera".to_string(),
-                stamp: rosrust::Time {
-                    sec: 0,
-                    nsec: 700_000_000,
-                },
-                seq: 1,
+                stamp: time_from_nanosec(700_000_000),
             },
             transform: Transform {
                 rotation: Quaternion {
@@ -374,26 +363,16 @@ mod test {
         build_test_tree(&mut tf_buffer, 1f64);
         let res = tf_buffer.lookup_transform_with_time_travel(
             "camera",
-            rosrust::Time {
-                sec: 0,
-                nsec: 400_000_000,
-            },
+            time_from_nanosec(400_000_000),
             "camera",
-            rosrust::Time {
-                sec: 0,
-                nsec: 700_000_000,
-            },
+            time_from_nanosec(700_000_000),
             "item",
         );
         let expected = TransformStamped {
             child_frame_id: "camera".to_string(),
             header: Header {
                 frame_id: "camera".to_string(),
-                stamp: rosrust::Time {
-                    sec: 0,
-                    nsec: 700_000_000,
-                },
-                seq: 1,
+                stamp: time_from_nanosec(700_000_000),
             },
             transform: Transform {
                 rotation: Quaternion {
@@ -418,7 +397,7 @@ mod test {
         let transform00 = TransformStamped {
             header: Header {
                 frame_id: PARENT.to_string(),
-                stamp: rosrust::Time { sec: 0, nsec: 0 },
+                stamp: time_from_nanosec(0),
                 ..Default::default()
             },
             child_frame_id: CHILD0.to_string(),
@@ -427,7 +406,7 @@ mod test {
         let transform01 = TransformStamped {
             header: Header {
                 frame_id: PARENT.to_string(),
-                stamp: rosrust::Time { sec: 1, nsec: 0 },
+                stamp: Time { sec: 1, nanosec: 0 },
                 ..Default::default()
             },
             child_frame_id: CHILD0.to_string(),
@@ -494,11 +473,11 @@ mod test {
 
     #[test]
     fn test_cache_duration() {
-        let mut tf_buffer = TfBuffer::new_with_duration(Duration::from_seconds(1));
+        let mut tf_buffer = TfBuffer::new_with_duration(Duration { sec: 1, nanosec: 0 });
         let transform00 = TransformStamped {
             header: Header {
                 frame_id: PARENT.to_string(),
-                stamp: rosrust::Time { sec: 0, nsec: 0 },
+                stamp: time_from_nanosec(0),
                 ..Default::default()
             },
             child_frame_id: CHILD0.to_string(),
@@ -507,7 +486,7 @@ mod test {
         let transform01 = TransformStamped {
             header: Header {
                 frame_id: PARENT.to_string(),
-                stamp: rosrust::Time { sec: 1, nsec: 0 },
+                stamp: Time { sec: 1, nanosec: 0 },
                 ..Default::default()
             },
             child_frame_id: CHILD0.to_string(),
@@ -516,7 +495,7 @@ mod test {
         let transform02 = TransformStamped {
             header: Header {
                 frame_id: PARENT.to_string(),
-                stamp: rosrust::Time { sec: 2, nsec: 0 },
+                stamp: Time { sec: 2, nanosec: 0 },
                 ..Default::default()
             },
             child_frame_id: CHILD0.to_string(),
@@ -537,7 +516,7 @@ mod test {
         assert_eq!(data.unwrap().transform_chain.len(), 1);
         assert_eq!(
             data.unwrap().transform_chain.get(0).unwrap().header.stamp,
-            Time::from_nanos(0)
+            time_from_nanosec(0)
         );
 
         tf_buffer.add_transform(&transform01, static_tf);
@@ -549,11 +528,11 @@ mod test {
         assert_eq!(data.unwrap().transform_chain.len(), 2);
         assert_eq!(
             data.unwrap().transform_chain.get(0).unwrap().header.stamp,
-            Time::from_nanos(0)
+            time_from_nanosec(0)
         );
         assert_eq!(
             data.unwrap().transform_chain.get(1).unwrap().header.stamp,
-            Time::from_nanos(1_000_000_000)
+            time_from_nanosec(1_000_000_000)
         );
 
         tf_buffer.add_transform(&transform02, static_tf);
@@ -565,11 +544,11 @@ mod test {
         assert_eq!(data.unwrap().transform_chain.len(), 2);
         assert_eq!(
             data.unwrap().transform_chain.get(0).unwrap().header.stamp,
-            Time::from_nanos(1_000_000_000)
+            time_from_nanosec(1_000_000_000)
         );
         assert_eq!(
             data.unwrap().transform_chain.get(1).unwrap().header.stamp,
-            Time::from_nanos(2_000_000_000)
+            time_from_nanosec(2_000_000_000)
         );
     }
 
@@ -599,8 +578,7 @@ mod test {
             child_frame_id: "camera1".to_string(),
             header: Header {
                 frame_id: "base".to_string(),
-                stamp: rosrust::Time { sec: 1, nsec: 0 },
-                seq: 1,
+                stamp: Time { sec: 1, nanosec: 0 },
             },
             transform: Transform {
                 rotation: Quaternion {
@@ -623,8 +601,7 @@ mod test {
             child_frame_id: "camera2".to_string(),
             header: Header {
                 frame_id: "base".to_string(),
-                stamp: rosrust::Time { sec: 1, nsec: 0 },
-                seq: 1,
+                stamp: Time { sec: 1, nanosec: 0 },
             },
             transform: Transform {
                 rotation: Quaternion {
@@ -647,8 +624,7 @@ mod test {
             child_frame_id: "target".to_string(),
             header: Header {
                 frame_id: "marker".to_string(),
-                stamp: rosrust::Time { sec: 1, nsec: 0 },
-                seq: 1,
+                stamp: Time { sec: 1, nanosec: 0 },
             },
             transform: Transform {
                 rotation: Quaternion {
@@ -671,8 +647,7 @@ mod test {
             child_frame_id: "marker".to_string(),
             header: Header {
                 frame_id: "camera1".to_string(),
-                stamp: rosrust::Time { sec: 1, nsec: 0 },
-                seq: 1,
+                stamp: Time { sec: 1, nanosec: 0 },
             },
             transform: Transform {
                 rotation: Quaternion {
@@ -692,7 +667,6 @@ mod test {
         tf_buffer.add_transform(&get_inverse(&camera1_to_marker), false);
 
         camera1_to_marker.header.stamp.sec = 2;
-        camera1_to_marker.header.seq += 1;
         camera1_to_marker.transform.translation.y = -1.0;
         tf_buffer.add_transform(&camera1_to_marker, false);
         tf_buffer.add_transform(&get_inverse(&camera1_to_marker), false);
@@ -701,8 +675,7 @@ mod test {
             child_frame_id: "marker".to_string(),
             header: Header {
                 frame_id: "camera2".to_string(),
-                stamp: rosrust::Time { sec: 3, nsec: 0 },
-                seq: 1,
+                stamp: Time { sec: 3, nanosec: 0 },
             },
             transform: Transform {
                 rotation: Quaternion {
@@ -722,13 +695,11 @@ mod test {
         tf_buffer.add_transform(&get_inverse(&camera2_to_marker), false);
 
         camera2_to_marker.header.stamp.sec = 4;
-        camera2_to_marker.header.seq += 1;
         camera2_to_marker.transform.translation.y = -1.0;
         tf_buffer.add_transform(&camera2_to_marker, false);
         tf_buffer.add_transform(&get_inverse(&camera2_to_marker), false);
 
-        let result =
-            tf_buffer.lookup_transform("base", "target", rosrust::Time { sec: 1, nsec: 0 });
+        let result = tf_buffer.lookup_transform("base", "target", &Time { sec: 1, nanosec: 0 });
         assert_eq!(
             result.unwrap().transform.translation,
             Vector3 {
@@ -741,9 +712,9 @@ mod test {
         let result = tf_buffer.lookup_transform(
             "base",
             "target",
-            rosrust::Time {
+            &Time {
                 sec: 1,
-                nsec: 500_000_000,
+                nanosec: 500_000_000,
             },
         );
         assert_eq!(
@@ -755,8 +726,7 @@ mod test {
             }
         );
 
-        let result =
-            tf_buffer.lookup_transform("base", "target", rosrust::Time { sec: 2, nsec: 0 });
+        let result = tf_buffer.lookup_transform("base", "target", &Time { sec: 2, nanosec: 0 });
         assert_eq!(
             result.unwrap().transform.translation,
             Vector3 {
@@ -769,15 +739,14 @@ mod test {
         let result = tf_buffer.lookup_transform(
             "base",
             "target",
-            rosrust::Time {
+            &Time {
                 sec: 2,
-                nsec: 500_000_000,
+                nanosec: 500_000_000,
             },
         );
         assert!(result.is_err());
 
-        let result =
-            tf_buffer.lookup_transform("base", "target", rosrust::Time { sec: 3, nsec: 0 });
+        let result = tf_buffer.lookup_transform("base", "target", &Time { sec: 3, nanosec: 0 });
         assert_eq!(
             result.unwrap().transform.translation,
             Vector3 {
@@ -790,9 +759,9 @@ mod test {
         let result = tf_buffer.lookup_transform(
             "base",
             "target",
-            rosrust::Time {
+            &Time {
                 sec: 3,
-                nsec: 500_000_000,
+                nanosec: 500_000_000,
             },
         );
         assert_eq!(
@@ -804,8 +773,7 @@ mod test {
             }
         );
 
-        let result =
-            tf_buffer.lookup_transform("base", "target", rosrust::Time { sec: 4, nsec: 0 });
+        let result = tf_buffer.lookup_transform("base", "target", &Time { sec: 4, nanosec: 0 });
         assert_eq!(
             result.unwrap().transform.translation,
             Vector3 {
@@ -818,28 +786,25 @@ mod test {
         let result = tf_buffer.lookup_transform(
             "base",
             "target",
-            rosrust::Time {
+            &Time {
                 sec: 4,
-                nsec: 500_000_000,
+                nanosec: 500_000_000,
             },
         );
         assert!(result.is_err());
 
         camera1_to_marker.header.stamp.sec = 5;
-        camera1_to_marker.header.seq += 1;
         camera1_to_marker.transform.translation.x = 0.5;
         camera1_to_marker.transform.translation.y = 1.0;
         tf_buffer.add_transform(&camera1_to_marker, false);
         tf_buffer.add_transform(&get_inverse(&camera1_to_marker), false);
 
         camera1_to_marker.header.stamp.sec = 6;
-        camera1_to_marker.header.seq += 1;
         camera1_to_marker.transform.translation.y = -1.0;
         tf_buffer.add_transform(&camera1_to_marker, false);
         tf_buffer.add_transform(&get_inverse(&camera1_to_marker), false);
 
-        let result =
-            tf_buffer.lookup_transform("base", "target", rosrust::Time { sec: 5, nsec: 0 });
+        let result = tf_buffer.lookup_transform("base", "target", &Time { sec: 5, nanosec: 0 });
         assert_eq!(
             result.unwrap().transform.translation,
             Vector3 {
@@ -852,9 +817,9 @@ mod test {
         let result = tf_buffer.lookup_transform(
             "base",
             "target",
-            rosrust::Time {
+            &Time {
                 sec: 5,
-                nsec: 500_000_000,
+                nanosec: 500_000_000,
             },
         );
         assert_eq!(
@@ -866,8 +831,7 @@ mod test {
             }
         );
 
-        let result =
-            tf_buffer.lookup_transform("base", "target", rosrust::Time { sec: 6, nsec: 0 });
+        let result = tf_buffer.lookup_transform("base", "target", &Time { sec: 6, nanosec: 0 });
         assert_eq!(
             result.unwrap().transform.translation,
             Vector3 {

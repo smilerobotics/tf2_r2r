@@ -1,43 +1,18 @@
-use crate::{
-    tf_error::TfError,
-    transforms::{geometry_msgs::TransformStamped, tf2_msgs::TFMessage},
-};
+use crate::tf_error::TfError;
+use r2r::{geometry_msgs::msg::TransformStamped, tf2_msgs::msg::TFMessage, QosProfile};
 
-/// Broadcast tf messages
-///
-/// Example usage:
-///
-/// ```no_run
-/// use tf_rosrust::{TfBroadcaster, TransformStamped};
-///
-/// rosrust::init("broadcaster");
-/// let broadcaster = TfBroadcaster::new();
-///
-/// let rate = rosrust::rate(100.0);
-/// let mut tf = TransformStamped::default();
-/// tf.header.frame_id = "map".to_string();
-/// tf.child_frame_id = "tf_rosrust".to_string();
-/// tf.transform.rotation.w = 1.0;
-/// let mut theta = 0.01_f64;
-/// while rosrust::is_ok() {
-///     theta += 0.01;
-///     tf.header.stamp = rosrust::now();
-///     tf.transform.translation.x = theta.sin();
-///     tf.transform.translation.y = theta.cos();
-///     broadcaster.send_transform(tf.clone()).unwrap();
-///     println!("{tf:?}");
-///     rate.sleep();
-/// }
-/// ```
 pub struct TfBroadcaster {
-    publisher: rosrust::Publisher<TFMessage>,
+    publisher: r2r::Publisher<TFMessage>,
+    _node: r2r::Node,
 }
 
 impl TfBroadcaster {
     /// Create a new TfBroadcaster
-    pub fn new() -> Self {
+    pub fn new(ctx: r2r::Context) -> Self {
+        let mut node = r2r::Node::create(ctx, "tf_broadcaster", "tf2_r2r").unwrap();
         Self {
-            publisher: rosrust::publish("/tf", 1000).unwrap(),
+            publisher: node.create_publisher("/tf", QosProfile::default()).unwrap(),
+            _node: node,
         }
     }
 
@@ -48,13 +23,7 @@ impl TfBroadcaster {
         };
         // TODO: handle error correctly
         self.publisher
-            .send(tf_message)
-            .map_err(|err| TfError::Rosrust(err.description().to_string()))
-    }
-}
-
-impl Default for TfBroadcaster {
-    fn default() -> Self {
-        TfBroadcaster::new()
+            .publish(&tf_message)
+            .map_err(|err| TfError::R2r(err.to_string()))
     }
 }
