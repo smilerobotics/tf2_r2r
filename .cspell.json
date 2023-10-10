@@ -40,10 +40,6 @@
   ],
   "ignorePaths": [
     // Licenses
-    "**/LICENSE*",
-    // Imported files
-    "**/ros_msgs/**",
-    // ROS package
-    "**/package.xml"
+    "**/LICENSE*"
   ]
 }

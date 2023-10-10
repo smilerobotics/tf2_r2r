@@ -1,8 +1,9 @@
 pub use nalgebra;
 use nalgebra::geometry::{Isometry3, Translation3, UnitQuaternion};
-
-use r2r::geometry_msgs::msg::{Pose, Quaternion, Transform, TransformStamped, Vector3};
-use r2r::std_msgs::msg::Header;
+use r2r::{
+    geometry_msgs::msg::{Pose, Quaternion, Transform, TransformStamped, Vector3},
+    std_msgs::msg::Header,
+};
 
 pub fn isometry_from_pose(pose: &Pose) -> Isometry3<f64> {
     let trans = Translation3::new(pose.position.x, pose.position.y, pose.position.z);
@@ -121,6 +122,22 @@ pub fn interpolate(t1: Transform, t2: Transform, weight: f64) -> Transform {
     }
 }
 
+pub(crate) fn to_transform_stamped(
+    tf: Transform,
+    from: std::string::String,
+    to: std::string::String,
+    time: &r2r::builtin_interfaces::msg::Time,
+) -> TransformStamped {
+    TransformStamped {
+        header: Header {
+            frame_id: from,
+            stamp: time.clone(),
+        },
+        child_frame_id: to,
+        transform: tf,
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -200,21 +217,5 @@ mod test {
             },
         };
         assert_eq!(interpolate(tf1, tf2, 0.5), expected);
-    }
-}
-
-pub(crate) fn to_transform_stamped(
-    tf: Transform,
-    from: std::string::String,
-    to: std::string::String,
-    time: &r2r::builtin_interfaces::msg::Time,
-) -> TransformStamped {
-    TransformStamped {
-        header: Header {
-            frame_id: from,
-            stamp: time.clone(),
-        },
-        child_frame_id: to,
-        transform: tf,
     }
 }

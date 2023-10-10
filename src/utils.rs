@@ -20,7 +20,7 @@ pub fn sub_time_and_time(target: &Time, delta: &Time) -> Duration {
         } else {
             Duration {
                 sec: target.sec - delta.sec - 1,
-                nanosec: BILLION as u32 + target.nanosec as u32 - delta.nanosec as u32,
+                nanosec: BILLION as u32 + target.nanosec - delta.nanosec,
             }
         }
     } else {
@@ -47,7 +47,7 @@ pub fn sub_duration_from_time(t: &Time, d: &Duration) -> Time {
 
     if nanosec.is_negative() {
         sec -= 1;
-        nanosec = BILLION as i64 + nanosec;
+        nanosec += BILLION;
     }
 
     Time {

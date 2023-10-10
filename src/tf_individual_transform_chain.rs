@@ -15,7 +15,7 @@ fn get_nanos(dur: Duration) -> i64 {
 
 fn binary_search_time(chain: &[TransformStamped], time: &Time) -> Result<usize, usize> {
     chain.binary_search_by(|element| {
-        time_as_ns_i64(&element.header.stamp).cmp(&time_as_ns_i64(&time))
+        time_as_ns_i64(&element.header.stamp).cmp(&time_as_ns_i64(time))
     })
 }
 
@@ -68,7 +68,7 @@ impl TfIndividualTransformChain {
             return Ok(self.transform_chain.last().unwrap().clone());
         }
 
-        match binary_search_time(&self.transform_chain, &time) {
+        match binary_search_time(&self.transform_chain, time) {
             Ok(x) => return Ok(self.transform_chain.get(x).unwrap().clone()),
             Err(x) => {
                 if x == 0 {
@@ -96,10 +96,10 @@ impl TfIndividualTransformChain {
                 let header = self.transform_chain.get(x).unwrap().header.clone();
                 let child_frame = self.transform_chain.get(x).unwrap().child_frame_id.clone();
                 let total_duration = get_nanos(sub_time_and_time(&time2, &time1)) as f64;
-                let desired_duration = get_nanos(sub_time_and_time(&time, &time1)) as f64;
+                let desired_duration = get_nanos(sub_time_and_time(time, &time1)) as f64;
                 let weight = 1.0 - desired_duration / total_duration;
                 let final_tf = interpolate(tf1, tf2, weight);
-                let ros_msg = to_transform_stamped(final_tf, header.frame_id, child_frame, &time);
+                let ros_msg = to_transform_stamped(final_tf, header.frame_id, child_frame, time);
                 Ok(ros_msg)
             }
         }
@@ -118,6 +118,6 @@ impl TfIndividualTransformChain {
         let last = self.transform_chain.last().unwrap();
 
         time_as_ns_i64(time) == 0
-            || is_time_in_range_eq(&time, &first.header.stamp, &last.header.stamp)
+            || is_time_in_range_eq(time, &first.header.stamp, &last.header.stamp)
     }
 }
